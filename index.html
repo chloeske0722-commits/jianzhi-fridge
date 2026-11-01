@@ -286,7 +286,7 @@ if(sb){
   sb.auth.onAuthStateChange((ev, session)=>{
     const u=session ? session.user : null, changed=(u&&u.id)!==(user&&user.id);
     user=u;
-    if(changed){ setSync("idle"); if(user) setTimeout(pull,0); if(typeof render==="function" && S.tab==="me") render(); }
+    if(changed){ setSync("idle"); if(user){ S.loginEmail=null; setTimeout(pull,0); } if(typeof render==="function" && S.tab==="me") render(); }
   });
   document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible" && user) pull(); });
 }
@@ -580,11 +580,18 @@ function viewMe(){
 function syncPanel(){
   let h=`<h2>云端同步</h2>`;
   if(!sb) return h+`<section class="panel hint">同步服务没有加载成功（可能是网络问题），数据先保存在本机。刷新页面可以再试。</section>`;
+  if(!user && S.loginEmail) return h+`<form class="panel stack" id="codeForm">
+    <div>验证码已发到 <b>${esc(S.loginEmail)}</b></div>
+    <div class="row"><input type="text" id="loginCode" required inputmode="numeric" autocomplete="one-time-code" maxlength="14" placeholder="邮件里的数字验证码" style="flex:1;min-width:160px;font-family:var(--mono);letter-spacing:.15em">
+      <button class="btn" type="submit">登录</button></div>
+    <div class="row"><button class="btn ghost small" type="button" id="resendCode">重新发送</button>
+      <button class="btn ghost small" type="button" id="changeEmail">换个邮箱</button></div>
+    <p class="hint" style="margin:0">在手机或电脑上看邮件都行，把数字填到这里。没收到先等几分钟、看看垃圾邮件箱；免费版每小时只能发两三封。</p></form>`;
   if(!user) return h+`<form class="panel stack" id="loginForm">
     <div>登录后，手机和电脑看到的是同一份记录，换设备或清理浏览器也不会丢。</div>
     <div class="row"><input type="email" id="loginEmail" required placeholder="你的邮箱" autocomplete="email" style="flex:1;min-width:180px">
-      <button class="btn" type="submit">发送登录链接</button></div>
-    <p class="hint" style="margin:0">会给你发一封邮件，点里面的链接就登录了，不用设密码。请用<b>要登录的这台设备</b>打开邮件里的链接。本机已有的记录会自动合并到云端。</p></form>`;
+      <button class="btn" type="submit">发送验证码</button></div>
+    <p class="hint" style="margin:0">会给你发一封带数字验证码的邮件，不用设密码。每台设备、每个浏览器第一次用时登录一次，之后会一直保持登录。本机已有的记录会自动合并到云端。</p></form>`;
   return h+`<section class="panel stack">
     <div>已登录 <b>${esc(user.email||"")}</b></div>
     <div class="hint" id="syncStatus">${syncText()}</div>
@@ -593,14 +600,30 @@ function syncPanel(){
     <p class="hint" style="margin:0">每次修改都会自动上传；换设备时用同一个邮箱登录即可。退出登录后这台设备上的数据还在，只是不再同步。</p></section>`;
 }
 function bindSync(){
-  const lf=document.getElementById("loginForm");
-  if(lf) lf.onsubmit=async ev=>{ ev.preventDefault();
-    const email=document.getElementById("loginEmail").value.trim(), btn=lf.querySelector("button");
-    btn.disabled=true; btn.textContent="发送中…";
+  const send=async(email, btn)=>{
+    const label=btn.textContent; btn.disabled=true; btn.textContent="发送中…";
     const {error}=await sb.auth.signInWithOtp({email, options:{emailRedirectTo:location.origin+location.pathname}});
-    btn.disabled=false; btn.textContent="发送登录链接";
-    toast(error?`发送失败：${error.message}`:`登录链接已发到 ${email}，去邮箱点开它（也看看垃圾邮件）`);
+    btn.disabled=false; btn.textContent=label;
+    if(error) return toast(`发送失败：${error.message}`);
+    S.loginEmail=email; saveLocal(); render(); toast(`验证码已发到 ${email}`);
+    const ci=document.getElementById("loginCode"); if(ci) ci.focus();
   };
+  const lf=document.getElementById("loginForm");
+  if(lf) lf.onsubmit=ev=>{ ev.preventDefault(); send(document.getElementById("loginEmail").value.trim(), lf.querySelector("button[type=submit]")); };
+  const cf=document.getElementById("codeForm");
+  if(cf){
+    cf.onsubmit=async ev=>{ ev.preventDefault();
+      const token=document.getElementById("loginCode").value.replace(/\D/g,""), btn=cf.querySelector("button[type=submit]");
+      if(token.length<6) return toast("请输入邮件里的数字验证码");
+      btn.disabled=true; btn.textContent="验证中…";
+      const {error}=await sb.auth.verifyOtp({email:S.loginEmail, token, type:"email"});
+      btn.disabled=false; btn.textContent="登录";
+      if(error) return toast(/expired|invalid/i.test(error.message)?"验证码不对或已过期，请检查，或点「重新发送」":`登录失败：${error.message}`);
+      S.loginEmail=null; saveLocal(); toast("登录成功，正在同步");
+    };
+    document.getElementById("resendCode").onclick=e=>send(S.loginEmail, e.currentTarget);
+    document.getElementById("changeEmail").onclick=()=>{ S.loginEmail=null; saveLocal(); render(); };
+  }
   const sn=document.getElementById("syncNow"); if(sn) sn.onclick=()=>pull();
   const lo=document.getElementById("logout"); if(lo) lo.onclick=async()=>{ await sb.auth.signOut(); S.syncUser=null; saveLocal(); render(); toast("已退出登录，数据仍保存在这台设备上"); };
 }
