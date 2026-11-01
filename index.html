@@ -136,7 +136,7 @@ input[type=number]{width:96px;font-family:var(--mono)}
 <div class="wrap">
   <header class="top">
     <h1>减脂冰箱<small>买了什么，就做什么</small></h1>
-    <span class="date num" id="today"></span>
+    <div style="text-align:right"><span class="date num" id="today"></span><div class="hint" id="syncBadge"></div></div>
   </header>
   <div id="demo" class="demo" hidden>
     <span>现在显示的是示例数据，方便你看功能怎么用。</span>
@@ -153,6 +153,7 @@ input[type=number]{width:96px;font-family:var(--mono)}
 </div>
 <div id="toast" class="toast" hidden></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
 <script>
 // 每 100g 生重：热量 kcal / 蛋白质 / 碳水 / 脂肪
 const FOODS = {
@@ -219,7 +220,81 @@ function demoState(){
 let S;
 try{ S = JSON.parse(localStorage.getItem(KEY)); }catch(e){ S = null; }
 if(!S || !S.pantry){ S = demoState(); }
-function save(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
+// 需要同步到云端的字段；tab、demo 等界面状态只留在本机
+const SYNC_KEYS = ["weight","target","pantry","log","onlyOk","histRange","lastExport"];
+const payload = () => { const o={}; for(const k of SYNC_KEYS) o[k]=S[k]; return o; };
+let lastPayload = JSON.stringify(payload());
+function saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} }
+function save(){
+  const p=JSON.stringify(payload());
+  if(!S.demo && p!==lastPayload){ lastPayload=p; S.updatedAt=new Date().toISOString(); schedulePush(); }
+  saveLocal();
+}
+
+// ---------- 云端同步（Supabase，每个用户一行 user_state） ----------
+const SB_URL = "https://flgdlbfrhznarzjrincp.supabase.co";
+const SB_KEY = "sb_publishable_nWyo3lyINT4Y2ojDEsSzTQ_6uLIjPfw";
+const sb = window.supabase ? window.supabase.createClient(SB_URL, SB_KEY) : null;
+let user=null, syncState="idle", syncMsg="", syncTime=null, pushTimer=null;
+const hm = d => String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+function syncText(){
+  return syncState==="syncing" ? "正在同步…"
+    : syncState==="error" ? `同步失败：${esc(syncMsg)}。数据已存在本机，下次打开或点「立即同步」会再试。`
+    : syncState==="ok" ? `已同步 · <span class="num">${hm(syncTime)}</span>` : "";
+}
+function setSync(st, msg){
+  syncState=st; syncMsg=msg||""; if(st==="ok") syncTime=new Date();
+  const b=document.getElementById("syncBadge");
+  if(b){ b.textContent=!user?"":st==="syncing"?"同步中…":st==="error"?"同步失败":st==="ok"?"☁ 已同步":""; b.style.color=st==="error"?"var(--warn)":""; }
+  const s=document.getElementById("syncStatus"); if(s) s.innerHTML=syncText();
+}
+function schedulePush(){ if(!user) return; clearTimeout(pushTimer); pushTimer=setTimeout(push,1200); }
+async function push(){
+  if(!user || S.demo) return;
+  clearTimeout(pushTimer); setSync("syncing");
+  const data={...payload(), updatedAt:S.updatedAt||new Date().toISOString()};
+  const {error}=await sb.from("user_state").upsert({user_id:user.id, data, updated_at:new Date().toISOString()});
+  if(error) return setSync("error", error.message);
+  S.syncUser=user.id; saveLocal(); setSync("ok");
+}
+function applyRemote(R){
+  for(const k of SYNC_KEYS) if(R[k]!==undefined) S[k]=R[k];
+  S.demo=false; S.updatedAt=R.updatedAt||new Date().toISOString(); S.syncUser=user.id;
+  lastPayload=JSON.stringify(payload()); saveLocal();
+}
+async function pull(){
+  if(!user) return;
+  setSync("syncing");
+  const {data:row, error}=await sb.from("user_state").select("data").eq("user_id",user.id).maybeSingle();
+  if(error) return setSync("error", error.message);
+  const R=row && row.data;
+  if(!R || !validBackup(R)) return S.demo ? setSync("ok") : push();
+  const first=S.syncUser!==user.id, localReal=!S.demo && (S.log.length || S.pantry.length);
+  const rT=R.updatedAt||"", lT=S.updatedAt||"";
+  if(first && localReal){
+    // 这台设备第一次登录、本机已有记录：饮食记录按 id 合并，其余取较新的一边
+    const ids=new Set(R.log.map(e=>e.id)), log=[...R.log, ...S.log.filter(e=>!ids.has(e.id))];
+    if(rT>lT) applyRemote(R);
+    S.log=log; S.syncUser=user.id; save(); await push(); render();
+    toast("已把这台设备上的记录和云端合并");
+  } else if(S.demo || first || rT>lT){
+    applyRemote(R); setSync("ok"); render();
+  } else if(lT>rT) await push();
+  else setSync("ok");
+}
+if(sb){
+  sb.auth.onAuthStateChange((ev, session)=>{
+    const u=session ? session.user : null, changed=(u&&u.id)!==(user&&user.id);
+    user=u;
+    if(changed){ setSync("idle"); if(user) setTimeout(pull,0); if(typeof render==="function" && S.tab==="me") render(); }
+  });
+  document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible" && user) pull(); });
+}
+if(/error_description=/.test(location.hash)){
+  const m=new URLSearchParams(location.hash.slice(1));
+  setTimeout(()=>toast("登录链接无效或已过期，请重新发送："+(m.get("error_description")||"")),300);
+  history.replaceState(null,"",location.pathname+location.search);
+}
 
 // ---------- 计算 ----------
 function macro(items, mult=1){
@@ -498,8 +573,36 @@ function viewMe(){
     <div class="bar-row"><span class="mf">脂肪</span><span class="hint">体重 × 0.8 g</span><span class="num">${T.f} g</span></div>
     <div class="bar-row"><span class="mc">碳水</span><span class="hint">剩余热量 ÷ 4</span><span class="num">${T.c} g</span></div>
   </section>
+  ${syncPanel()}
   ${backupPanel()}
   <p class="hint">食物营养数据为每 100g 生重的常见参考值。</p>`;
+}
+function syncPanel(){
+  let h=`<h2>云端同步</h2>`;
+  if(!sb) return h+`<section class="panel hint">同步服务没有加载成功（可能是网络问题），数据先保存在本机。刷新页面可以再试。</section>`;
+  if(!user) return h+`<form class="panel stack" id="loginForm">
+    <div>登录后，手机和电脑看到的是同一份记录，换设备或清理浏览器也不会丢。</div>
+    <div class="row"><input type="email" id="loginEmail" required placeholder="你的邮箱" autocomplete="email" style="flex:1;min-width:180px">
+      <button class="btn" type="submit">发送登录链接</button></div>
+    <p class="hint" style="margin:0">会给你发一封邮件，点里面的链接就登录了，不用设密码。请用<b>要登录的这台设备</b>打开邮件里的链接。本机已有的记录会自动合并到云端。</p></form>`;
+  return h+`<section class="panel stack">
+    <div>已登录 <b>${esc(user.email||"")}</b></div>
+    <div class="hint" id="syncStatus">${syncText()}</div>
+    <div class="row"><button class="btn ghost small" type="button" id="syncNow">立即同步</button>
+      <button class="btn ghost small" type="button" id="logout">退出登录</button></div>
+    <p class="hint" style="margin:0">每次修改都会自动上传；换设备时用同一个邮箱登录即可。退出登录后这台设备上的数据还在，只是不再同步。</p></section>`;
+}
+function bindSync(){
+  const lf=document.getElementById("loginForm");
+  if(lf) lf.onsubmit=async ev=>{ ev.preventDefault();
+    const email=document.getElementById("loginEmail").value.trim(), btn=lf.querySelector("button");
+    btn.disabled=true; btn.textContent="发送中…";
+    const {error}=await sb.auth.signInWithOtp({email, options:{emailRedirectTo:location.origin+location.pathname}});
+    btn.disabled=false; btn.textContent="发送登录链接";
+    toast(error?`发送失败：${error.message}`:`登录链接已发到 ${email}，去邮箱点开它（也看看垃圾邮件）`);
+  };
+  const sn=document.getElementById("syncNow"); if(sn) sn.onclick=()=>pull();
+  const lo=document.getElementById("logout"); if(lo) lo.onclick=async()=>{ await sb.auth.signOut(); S.syncUser=null; saveLocal(); render(); toast("已退出登录，数据仍保存在这台设备上"); };
 }
 function backupPanel(){
   const dates=S.log.map(e=>e.date).sort(), P=pendingImport;
@@ -512,7 +615,7 @@ function backupPanel(){
   if(P){ const pd=P.log.map(e=>e.date).sort();
     h+=`<div class="demo" style="background:var(--warn-soft)"><span>备份里有 <b class="num">${P.log.length}</b> 条记录${pd.length?`（<span class="num">${pd[0]}</span> 至 <span class="num">${pd[pd.length-1]}</span>）`:""}和 <b class="num">${P.pantry.length}</b> 样食材。恢复会<b>替换</b>当前全部数据。</span>
       <span class="row"><button class="btn small danger" type="button" id="impOk">确认恢复</button><button class="btn small ghost" type="button" id="impNo">取消</button></span></div>`; }
-  return h+`<p class="hint" style="margin:0">数据只保存在这个浏览器里，换手机、换浏览器或清理浏览器数据都会丢失。建议每周导出一次，把文件存到网盘或发给自己。</p></section>`;
+  return h+`<p class="hint" style="margin:0">${user?"已开启云端同步，备份是额外的一份保险。":"没登录时，数据只保存在这个浏览器里，换手机、换浏览器或清理浏览器数据都会丢失。"}建议每周导出一次，把文件存到网盘或发给自己。</p></section>`;
 }
 function validBackup(d){
   return d && Array.isArray(d.pantry) && Array.isArray(d.log)
@@ -545,6 +648,7 @@ function bindMe(){
     S.weight=+document.getElementById("meW").value||S.weight; S.target=+document.getElementById("meK").value||S.target;
     touch(); toast("目标已保存");
   };
+  bindSync();
   bindBackup();
 }
 
