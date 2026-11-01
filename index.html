@@ -586,7 +586,7 @@ function syncPanel(){
       <button class="btn" type="submit">登录</button></div>
     <div class="row"><button class="btn ghost small" type="button" id="resendCode">重新发送</button>
       <button class="btn ghost small" type="button" id="changeEmail">换个邮箱</button></div>
-    <p class="hint" style="margin:0">在手机或电脑上看邮件都行，把数字填到这里。没收到先等几分钟、看看垃圾邮件箱；免费版每小时只能发两三封。</p></form>`;
+    <p class="hint" style="margin:0">在手机或电脑上看邮件都行，把数字填到这里。如果邮件里只有链接、没有数字，就<b>在这台设备、这个浏览器</b>里打开邮件并点链接登录。没收到先等几分钟、看看垃圾邮件箱。</p></form>`;
   if(!user) return h+`<form class="panel stack" id="loginForm">
     <div>登录后，手机和电脑看到的是同一份记录，换设备或清理浏览器也不会丢。</div>
     <div class="row"><input type="email" id="loginEmail" required placeholder="你的邮箱" autocomplete="email" style="flex:1;min-width:180px">
