@@ -39,7 +39,7 @@ header.top{display:flex;align-items:baseline;justify-content:space-between;gap:1
 h1{font-family:var(--display);font-weight:900;font-size:28px;margin:0;letter-spacing:.02em}
 h1 small{font-family:var(--body);font-weight:400;font-size:13px;color:var(--muted);margin-left:8px;letter-spacing:0}
 .date{font-family:var(--mono);font-size:13px;color:var(--muted)}
-nav.tabs{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:8px 12px;display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+nav.tabs{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:8px 12px;display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
 nav.tabs button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:9px 4px;border-radius:10px;cursor:pointer}
 nav.tabs button[aria-selected="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink);font-weight:500}
 button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -110,6 +110,22 @@ input[type=number]{width:96px;font-family:var(--mono)}
 .cook{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:10px;border-top:1px dashed var(--line)}
 .filter{display:flex;gap:8px;align-items:center;font-size:14px;margin-bottom:10px;flex-wrap:wrap}
 
+/* history */
+.chart{position:relative;min-height:170px}
+.chart svg{display:block}
+.chart text{font-family:var(--mono);font-size:11px;fill:var(--muted)}
+.chart text.sel{fill:var(--ink);font-weight:500}
+.chart .tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12.5px;line-height:1.45;padding:6px 9px;border-radius:8px;white-space:nowrap;z-index:2}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{font:inherit;font-size:13px;border:0;background:var(--surface);color:var(--muted);padding:6px 12px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;border-top:1px dashed var(--line);padding-top:12px}
+.stat .v{font-family:var(--mono);font-size:22px;font-weight:500;line-height:1.3}
+.daynav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.daynav input{flex:1;max-width:180px;text-align:center}
+.btn:disabled{opacity:.4;cursor:default}
+@media (max-width:420px){nav.tabs button{font-size:13px;padding:9px 2px}.stat .v{font-size:19px}}
+
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:11px 16px;border-radius:12px;font-size:14px;max-width:min(92vw,560px);z-index:20;box-shadow:0 6px 24px rgba(0,0,0,.18)}
 .hint{font-size:12.5px;color:var(--muted)}
 @media (prefers-reduced-motion:no-preference){.toast{animation:up .25s ease}@keyframes up{from{transform:translate(-50%,8px)}}}
@@ -130,6 +146,7 @@ input[type=number]{width:96px;font-family:var(--mono)}
     <button role="tab" data-tab="today" aria-selected="true">今日饮食</button>
     <button role="tab" data-tab="pantry" aria-selected="false">我的食材</button>
     <button role="tab" data-tab="recipes" aria-selected="false">推荐食谱</button>
+    <button role="tab" data-tab="history" aria-selected="false">历史</button>
     <button role="tab" data-tab="me" aria-selected="false">目标</button>
   </nav>
   <main id="view"></main>
@@ -184,7 +201,10 @@ const MEALS = ["早餐","午餐","晚餐","加餐"];
 
 // ---------- 状态 ----------
 const KEY = "jianzhi-fridge-v1";
-const todayISO = () => { const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+const isoOf = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+const todayISO = () => isoOf(new Date());
+const addDays = (iso, n) => { const [y,m,d]=iso.split("-").map(Number); return isoOf(new Date(y,m-1,d+n)); };
+const dayLabel = iso => { const [y,m,d]=iso.split("-").map(Number); return `${m}月${d}日 · 周${"日一二三四五六"[new Date(y,m-1,d).getDay()]}`+(iso===todayISO()?"（今天）":""); };
 const uid = () => Math.random().toString(36).slice(2,9);
 function demoState(){
   const t = todayISO();
@@ -241,15 +261,16 @@ function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg
 function touch(){ if(S.demo){ S.demo=false; } save(); render(); }
 
 // ---------- 视图：今日 ----------
-function viewToday(){
-  const T=targets(), todays=S.log.filter(e=>e.date===todayISO());
-  const sum=todays.reduce((a,e)=>({k:a.k+e.k,p:a.p+e.p,c:a.c+e.c,f:a.f+e.f}),{k:0,p:0,c:0,f:0});
-  const left=T.k-sum.k;
+const sumOf = es => es.reduce((a,e)=>({k:a.k+e.k,p:a.p+e.p,c:a.c+e.c,f:a.f+e.f}),{k:0,p:0,c:0,f:0});
+const entriesOn = iso => S.log.filter(e=>e.date===iso);
+function summaryPanel(es, isToday){
+  const T=targets(), sum=sumOf(es), left=T.k-sum.k;
   const bar=(v,t,col)=>`<div class="bar"><i style="width:${Math.min(100,t?v/t*100:0)}%;background:${col}"></i></div>`;
-  let h=`<section class="panel sum">
-    <div><div class="label">${left>=0?"今天还可以吃":"今天已超出"}</div>
+  const lbl=left>=0?(isToday?"今天还可以吃":"比目标少吃"):(isToday?"今天已超出":"比目标多吃");
+  return `<section class="panel sum">
+    <div><div class="label">${lbl}</div>
       <div class="big ${left<0?"over":""}">${Math.abs(r0(left))}<span style="font-size:16px;color:var(--muted)"> kcal</span></div>
-      <div class="hint num">已吃 ${r0(sum.k)} / 目标 ${T.k}</div></div>
+      <div class="hint num">${isToday?"已吃":"吃了"} ${r0(sum.k)} / 目标 ${T.k}</div></div>
     <div class="bars">
       <div class="bar-row"><span>蛋白质</span>${bar(sum.p,T.p,"var(--pro)")}<span class="num">${r0(sum.p)} / ${T.p} g</span></div>
       <div class="bar-row"><span>碳水</span>${bar(sum.c,T.c,"var(--carb)")}<span class="num">${r0(sum.c)} / ${T.c} g</span></div>
@@ -257,6 +278,28 @@ function viewToday(){
     </div>
     <div class="bar kbar"><i style="width:${Math.min(100,sum.k/T.k*100)}%;background:${left<0?"var(--warn)":"var(--accent)"}"></i></div>
   </section>`;
+}
+function mealList(es, canDelete, emptyMsg){
+  let h=`<section class="panel">`;
+  if(!es.length) h+=`<div class="empty">${emptyMsg}</div>`;
+  for(const m of MEALS){
+    const ms=es.filter(e=>e.meal===m); if(!ms.length) continue;
+    const mk=ms.reduce((a,e)=>a+e.k,0);
+    h+=`<div class="meal"><h3><span>${m}</span><span class="num">${r0(mk)} kcal</span></h3>`;
+    for(const e of ms){
+      const desc = e.items.length>1 ? e.items.map(([n,g])=>`${n}${r0(g*e.servings)}g`).join("、") : `${r0(e.items[0][1])} g`;
+      h+=`<div class="entry"><div style="min-width:0"><div class="name">${esc(e.name)}${e.servings!==1&&e.items.length>1?` ×${e.servings}`:""}</div>
+        <div class="sub">${esc(desc)}</div></div>
+        <div style="text-align:right"><div class="num">${r0(e.k)} kcal</div>${macroLine(e)}</div>
+        ${canDelete?`<button class="iconbtn" data-del="${e.id}" aria-label="删除这条记录并退回食材">×</button>`:"<span></span>"}</div>`;
+    }
+    h+=`</div>`;
+  }
+  return h+`</section>`;
+}
+function viewToday(){
+  const todays=entriesOn(todayISO());
+  let h=summaryPanel(todays,true);
 
   h+=`<h2>记一笔</h2><form class="panel stack" id="addLog">
     <div class="row"><select id="lgFood">${foodOptions("鸡蛋")}</select>
@@ -269,22 +312,8 @@ function viewToday(){
       <span class="hint" style="margin-left:8px">做了整道菜？去「推荐食谱」一键记录</span></div>
   </form>`;
 
-  h+=`<h2>今天吃了</h2><section class="panel">`;
-  if(!todays.length) h+=`<div class="empty">还没有记录。吃完饭后在上面记一笔，或在食谱里点「做了，记录」。</div>`;
-  for(const m of MEALS){
-    const es=todays.filter(e=>e.meal===m); if(!es.length) continue;
-    const mk=es.reduce((a,e)=>a+e.k,0);
-    h+=`<div class="meal"><h3><span>${m}</span><span class="num">${r0(mk)} kcal</span></h3>`;
-    for(const e of es){
-      const desc = e.items.length>1 ? e.items.map(([n,g])=>`${n}${r0(g*e.servings)}g`).join("、") : `${r0(e.items[0][1])} g`;
-      h+=`<div class="entry"><div style="min-width:0"><div class="name">${esc(e.name)}${e.servings!==1&&e.items.length>1?` ×${e.servings}`:""}</div>
-        <div class="sub">${esc(desc)}</div></div>
-        <div style="text-align:right"><div class="num">${r0(e.k)} kcal</div>${macroLine(e)}</div>
-        <button class="iconbtn" data-del="${e.id}" aria-label="删除这条记录并退回食材">×</button></div>`;
-    }
-    h+=`</div>`;
-  }
-  h+=`</section><p class="hint">删除记录时，之前扣掉的食材会自动退回库存。</p>`;
+  h+=`<h2>今天吃了</h2>`+mealList(todays,true,"还没有记录。吃完饭后在上面记一笔，或在食谱里点「做了，记录」。");
+  h+=`<p class="hint">删除记录时，之前扣掉的食材会自动退回库存。</p>`;
   return h;
 }
 function bindToday(){
@@ -391,7 +420,72 @@ function bindRecipes(){
   });
 }
 
+// ---------- 视图：历史 ----------
+let histDay=null, CH=null;
+function viewHistory(){
+  const N=S.histRange||14, today=todayISO(), T=targets();
+  const day=histDay&&histDay<=today?histDay:today;
+  const days=[...Array(N)].map((_,i)=>addDays(today,i-N+1)), totals=days.map(d=>sumOf(entriesOn(d)));
+  const rec=totals.filter(t=>t.k>0), avg=rec.length?rec.reduce((a,t)=>a+t.k,0)/rec.length:0;
+  CH={days,totals,T,day};
+  let h=`<h2>热量趋势</h2><section class="panel stack">
+    <div class="row" style="justify-content:space-between"><div class="seg" role="group" aria-label="时间范围">${[7,14,30].map(n=>`<button type="button" data-range="${n}" aria-pressed="${n===N}">${n} 天</button>`).join("")}</div>
+      <span class="hint">点柱子查看那一天</span></div>
+    <div class="chart" id="chart" role="img" aria-label="最近${N}天每日热量，虚线为目标 ${T.k} kcal"></div>
+    <div class="stats">
+      <div class="stat"><div class="label">记录天数</div><div class="v">${rec.length}<span class="hint"> / ${N}</span></div></div>
+      <div class="stat"><div class="label">日均热量</div><div class="v">${r0(avg)}<span class="hint"> kcal</span></div></div>
+      <div class="stat"><div class="label">未超目标</div><div class="v">${rec.filter(t=>t.k<=T.k).length}<span class="hint"> 天</span></div></div>
+    </div></section>`;
+  h+=`<h2>按天查看</h2><div class="daynav">
+    <button class="btn ghost small" type="button" data-step="-1">‹ 前一天</button>
+    <input type="date" id="hDate" value="${day}" max="${today}" aria-label="选择日期">
+    <button class="btn ghost small" type="button" data-step="1" ${day>=today?"disabled":""}>后一天 ›</button></div>`;
+  const es=entriesOn(day);
+  h+=`<div class="label" style="margin-bottom:6px">${dayLabel(day)}</div>`+summaryPanel(es,day===today)+`<div style="height:10px"></div>`+mealList(es,false,"这一天没有记录。");
+  return h+`<p class="hint">历史记录只能查看；要删除今天的记录请回到「今日饮食」。目标线按现在设置的目标计算，日均热量只算有记录的天。</p>`;
+}
+function drawChart(){
+  const el=document.getElementById("chart"); if(!el||!CH) return;
+  const {days,totals,T,day}=CH, N=days.length, W=el.clientWidth, H=170, pl=36, pr=4, pt=14, pb=22;
+  const max=Math.max(T.k*1.2,...totals.map(t=>t.k)), y=v=>pt+(H-pt-pb)*(1-v/max), y0=y(0);
+  const slot=(W-pl-pr)/N, bw=Math.max(2,Math.min(24,slot*0.7,slot-2)), step=Math.ceil(38/slot), sel=days.indexOf(day);
+  const onStep=i=>(N-1-i)%step===0;
+  const md=iso=>{const [,m,d]=iso.split("-").map(Number); return `${m}/${d}`;};
+  let s=`<svg width="${W}" height="${H}" aria-hidden="true">
+    <line x1="${pl}" x2="${W-pr}" y1="${y0}" y2="${y0}" stroke="var(--line)"/>
+    <line x1="${pl}" x2="${W-pr}" y1="${y(T.k)}" y2="${y(T.k)}" stroke="var(--muted)" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="${pl-6}" y="${y(T.k)+4}" text-anchor="end">${T.k}</text><text x="${W-pr}" y="${y(T.k)-5}" text-anchor="end">目标</text>
+    <text x="${pl-6}" y="${y0+4}" text-anchor="end">0</text>`;
+  days.forEach((d,i)=>{
+    const cx=pl+slot*(i+.5), k=totals[i].k;
+    if(k>0){ const top=y(k), x=cx-bw/2, r=Math.min(4,bw/2,y0-top);
+      s+=`<path d="M${x},${y0}V${top+r}Q${x},${top} ${x+r},${top}H${x+bw-r}Q${x+bw},${top} ${x+bw},${top+r}V${y0}Z" style="fill:${k>T.k?"var(--warn)":"var(--accent)"}"/>`; }
+    if(i===sel) s+=`<line x1="${cx-bw/2-2}" x2="${cx+bw/2+2}" y1="${y0+3}" y2="${y0+3}" stroke="var(--ink)" stroke-width="2"/>`;
+    if(i===sel || (onStep(i) && (sel<0 || onStep(sel) || Math.abs(i-sel)>=step)))
+      s+=`<text x="${Math.min(cx,W-pr-17)}" y="${H-5}" text-anchor="middle"${i===sel?` class="sel"`:""}>${md(d)}</text>`;
+    s+=`<rect data-i="${i}" x="${pl+slot*i}" y="0" width="${slot}" height="${H}" fill="transparent" style="cursor:pointer"/>`;
+  });
+  el.innerHTML=s+`</svg><div class="tip" hidden></div>`;
+  const tip=el.querySelector(".tip");
+  el.querySelectorAll("rect[data-i]").forEach(r=>{ const i=+r.dataset.i, t=totals[i];
+    r.onpointerenter=()=>{ tip.innerHTML=`${dayLabel(days[i])}<br>`+(t.k>0?`<span class="num">${r0(t.k)} kcal</span> · 蛋${r0(t.p)} 碳${r0(t.c)} 脂${r0(t.f)}`:"没有记录");
+      tip.hidden=false; const cx=pl+slot*(i+.5), w=tip.offsetWidth;
+      tip.style.left=Math.max(0,Math.min(W-w,cx-w/2))+"px"; tip.style.top=Math.max(0,(t.k>0?y(t.k):y0)-tip.offsetHeight-8)+"px"; };
+    r.onpointerleave=()=>{ tip.hidden=true; };
+    r.onclick=()=>{ histDay=days[i]; render(); };
+  });
+}
+function bindHistory(){
+  document.querySelectorAll("[data-range]").forEach(b=>b.onclick=()=>{ S.histRange=+b.dataset.range; save(); render(); });
+  document.querySelectorAll("[data-step]").forEach(b=>b.onclick=()=>{ const d=addDays(CH.day,+b.dataset.step); histDay=d>todayISO()?todayISO():d; render(); });
+  document.getElementById("hDate").onchange=e=>{ const v=e.target.value; if(v){ histDay=v>todayISO()?todayISO():v; render(); } };
+  drawChart();
+}
+window.addEventListener("resize",()=>{ if(S.tab==="history") drawChart(); });
+
 // ---------- 视图：目标 ----------
+let pendingImport=null;
 function viewMe(){
   const T=targets();
   return `<h2>我的每日目标</h2><form class="panel stack" id="meForm">
@@ -404,17 +498,58 @@ function viewMe(){
     <div class="bar-row"><span class="mf">脂肪</span><span class="hint">体重 × 0.8 g</span><span class="num">${T.f} g</span></div>
     <div class="bar-row"><span class="mc">碳水</span><span class="hint">剩余热量 ÷ 4</span><span class="num">${T.c} g</span></div>
   </section>
-  <p class="hint">数据只保存在这个浏览器里。食物营养数据为每 100g 生重的常见参考值。</p>`;
+  ${backupPanel()}
+  <p class="hint">食物营养数据为每 100g 生重的常见参考值。</p>`;
+}
+function backupPanel(){
+  const dates=S.log.map(e=>e.date).sort(), P=pendingImport;
+  let h=`<h2>数据备份</h2><section class="panel stack">
+    <div>共 <span class="num">${S.log.length}</span> 条饮食记录${dates.length?`，最早 <span class="num">${dates[0]}</span>`:""} · 冰箱里 <span class="num">${S.pantry.length}</span> 样食材</div>
+    <div class="hint">上次导出：<span class="num">${S.lastExport||"从未导出"}</span></div>
+    <div class="row"><button class="btn" type="button" id="exportBtn">导出备份</button>
+      <button class="btn ghost" type="button" id="importBtn">从备份恢复</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden></div>`;
+  if(P){ const pd=P.log.map(e=>e.date).sort();
+    h+=`<div class="demo" style="background:var(--warn-soft)"><span>备份里有 <b class="num">${P.log.length}</b> 条记录${pd.length?`（<span class="num">${pd[0]}</span> 至 <span class="num">${pd[pd.length-1]}</span>）`:""}和 <b class="num">${P.pantry.length}</b> 样食材。恢复会<b>替换</b>当前全部数据。</span>
+      <span class="row"><button class="btn small danger" type="button" id="impOk">确认恢复</button><button class="btn small ghost" type="button" id="impNo">取消</button></span></div>`; }
+  return h+`<p class="hint" style="margin:0">数据只保存在这个浏览器里，换手机、换浏览器或清理浏览器数据都会丢失。建议每周导出一次，把文件存到网盘或发给自己。</p></section>`;
+}
+function validBackup(d){
+  return d && Array.isArray(d.pantry) && Array.isArray(d.log)
+    && d.pantry.every(x=>x && typeof x.name==="string" && typeof x.g==="number" && typeof x.date==="string")
+    && d.log.every(e=>e && typeof e.date==="string" && typeof e.name==="string" && Array.isArray(e.items) && e.items.length && typeof e.k==="number");
+}
+function bindBackup(){
+  document.getElementById("exportBtn").onclick=()=>{
+    const t=todayISO(), {weight,target,pantry,log,onlyOk,histRange}=S;
+    const blob=new Blob([JSON.stringify({app:"jianzhi-fridge",version:1,exportedAt:new Date().toISOString(),weight,target,pantry,log,onlyOk,histRange})],{type:"application/json"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`减脂冰箱备份-${t}.json`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    S.lastExport=t; save(); render(); toast("备份已下载，记得存到网盘或发给自己");
+  };
+  const fi=document.getElementById("importFile");
+  document.getElementById("importBtn").onclick=()=>fi.click();
+  fi.onchange=async()=>{ const f=fi.files[0]; if(!f) return;
+    try{ const d=JSON.parse(await f.text()); if(!validBackup(d)) throw 0; pendingImport=d; render(); }
+    catch(e){ fi.value=""; toast("这个文件不是减脂冰箱的备份"); }
+  };
+  if(pendingImport){
+    document.getElementById("impOk").onclick=()=>{ const d=pendingImport; pendingImport=null;
+      S={demo:false,tab:"me",weight:+d.weight||S.weight,target:+d.target||S.target,pantry:d.pantry,log:d.log,onlyOk:!!d.onlyOk,histRange:+d.histRange||14,lastExport:S.lastExport};
+      histDay=null; save(); render(); toast(`已恢复 ${S.log.length} 条记录`); };
+    document.getElementById("impNo").onclick=()=>{ pendingImport=null; render(); };
+  }
 }
 function bindMe(){
   document.getElementById("meForm").onsubmit=ev=>{ev.preventDefault();
     S.weight=+document.getElementById("meW").value||S.weight; S.target=+document.getElementById("meK").value||S.target;
     touch(); toast("目标已保存");
   };
+  bindBackup();
 }
 
 // ---------- 渲染 ----------
-const VIEWS={today:[viewToday,bindToday],pantry:[viewPantry,bindPantry],recipes:[viewRecipes,bindRecipes],me:[viewMe,bindMe]};
+const VIEWS={today:[viewToday,bindToday],pantry:[viewPantry,bindPantry],recipes:[viewRecipes,bindRecipes],history:[viewHistory,bindHistory],me:[viewMe,bindMe]};
 function render(){
   const tab=S.tab||"today";
   document.querySelectorAll("nav.tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===tab));
